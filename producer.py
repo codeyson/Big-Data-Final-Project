@@ -15,6 +15,8 @@ import random
 import math
 from datetime import datetime, timedelta
 from typing import Dict, Any, List
+import requests
+
 
 # Kafka libraries
 from kafka import KafkaProducer
@@ -87,94 +89,63 @@ class StreamingDataProducer:
             print(f"ERROR: Failed to initialize Kafka producer: {e}")
             self.producer = None
 
-    def generate_sample_data(self) -> Dict[str, Any]:
-        """
-        Generate realistic streaming data with stateful patterns
-        
-        This function creates continuously changing records with realistic patterns:
-        - Daily cycles using sine waves
-        - Gradual trends and realistic noise
-        - Multiple metric types (temperature, humidity, pressure)
-        - Temporal consistency with progressive timestamps
-        
-        Expected data format (must include these fields for dashboard compatibility):
-        {
-            "timestamp": "2023-10-01T12:00:00Z",  # ISO format timestamp
-            "value": 123.45,                      # Numeric measurement value
-            "metric_type": "temperature",         # Type of metric (temperature, humidity, etc.)
-            "sensor_id": "sensor_001",            # Unique identifier for data source
-            "location": "server_room_a",          # Sensor location
-            "unit": "celsius",                    # Measurement unit
-        }
-        """
-        
-        # Select a random sensor from the expanded pool
-        sensor = random.choice(self.sensors)
-        sensor_id = sensor["id"]
-        metric_type = sensor["type"]
-        
-        # Initialize sensor state if not exists
-        if sensor_id not in self.sensor_states:
-            config = self.metric_ranges[metric_type]
-            base_value = random.uniform(config["min"], config["max"])
-            trend = random.uniform(config["trend_range"][0], config["trend_range"][1])
-            phase_offset = random.uniform(0, 2 * 3.14159)  # Random phase for daily cycle
-            
-            self.sensor_states[sensor_id] = {
-                "base_value": base_value,
-                "trend": trend,
-                "phase_offset": phase_offset,
-                "last_value": base_value,
-                "message_count": 0
-            }
-        
-        state = self.sensor_states[sensor_id]
-        
-        # Calculate progressive timestamp with configurable intervals
-        current_time = self.base_time + timedelta(seconds=self.time_counter)
-        self.time_counter += random.uniform(0.5, 2.0)  # Variable intervals for realism
-        
-        # Generate realistic value with patterns
-        config = self.metric_ranges[metric_type]
-        
-        # Daily cycle using sine wave (24-hour period)
-        hours_in_day = 24
-        current_hour = current_time.hour + current_time.minute / 60
-        daily_cycle = math.sin(2 * 3.14159 * current_hour / hours_in_day + state["phase_offset"])
-        
-        # Apply trend over time (slow drift)
-        trend_effect = state["trend"] * (state["message_count"] / 100.0)
-        
-        # Add realistic noise (small random variations)
-        noise = random.uniform(-config["daily_amplitude"] * 0.1, config["daily_amplitude"] * 0.1)
-        
-        # Calculate final value with bounds checking
-        base_value = state["base_value"]
-        daily_variation = daily_cycle * config["daily_amplitude"]
-        raw_value = base_value + daily_variation + trend_effect + noise
-        
-        # Ensure value stays within reasonable bounds
-        bounded_value = max(config["min"], min(config["max"], raw_value))
-        
-        # Update state
-        state["last_value"] = bounded_value
-        state["message_count"] += 1
-        
-        # Occasionally introduce small trend changes for realism
-        if random.random() < 0.01:  # 1% chance per message
-            state["trend"] = random.uniform(config["trend_range"][0], config["trend_range"][1])
-        
-        # Generate realistic data structure
-        sample_data = {
-            "timestamp": current_time.isoformat() + 'Z',
-            "value": round(bounded_value, 2),
-            "metric_type": metric_type,
-            "sensor_id": sensor_id,
-            "location": sensor["location"],
-            "unit": sensor["unit"],
-        }
-        
-        return sample_data
+    def generate_sample_data(self):
+        """Fetch OpenWeather live data or generate synthetic."""
+        try:
+            API_KEY = "9c07e4455e6f428cd0ba1647139b58ca"
+            CITY = "Manila"
+
+            url = f"https://api.openweathermap.org/data/2.5/weather?q={CITY}&appid={API_KEY}&units=metric"
+            response = requests.get(url).json()
+
+            if "main" in response:
+                return [
+                    {
+                        "timestamp": datetime.utcnow().replace(microsecond=0).isoformat() + "+00:00",
+                        "value": response["main"]["temp"],
+                        "metric_type": "temperature",
+                        "sensor_id": "weather_manila_temp",
+                    },
+                    {
+                        "timestamp": datetime.utcnow().replace(microsecond=0).isoformat() + "+00:00",
+                        "value": response["main"]["humidity"],
+                        "metric_type": "humidity",
+                        "sensor_id": "weather_manila_humidity",
+                    },
+                    {
+                        "timestamp": datetime.utcnow().replace(microsecond=0).isoformat() + "+00:00",
+                        "value": response["main"]["pressure"],
+                        "metric_type": "pressure",
+                        "sensor_id": "weather_manila_pressure",
+                    },
+                ]
+        except Exception as e:
+            print("OpenWeather API error:", e)
+
+        # ---- ALWAYS RETURN A LIST OF DICTS ----
+        return [
+            {
+                "timestamp": datetime.utcnow().isoformat() + "+00:00",
+                "value": round(random.uniform(20, 30), 2),
+                "metric_type": "temperature",
+                "sensor_id": "sensor_fallback_temp",
+            },
+            {
+                "timestamp": datetime.utcnow().isoformat() + "+00:00",
+                "value": round(random.uniform(40, 70), 2),
+                "metric_type": "humidity",
+                "sensor_id": "sensor_fallback_humidity",
+            },
+            {
+                "timestamp": datetime.utcnow().isoformat() + "+00:00",
+                "value": round(random.uniform(990, 1020), 2),
+                "metric_type": "pressure",
+                "sensor_id": "sensor_fallback_pressure",
+            },
+        ]
+
+
+
 
     def serialize_data(self, data: Dict[str, Any]) -> bytes:
         """
@@ -239,47 +210,37 @@ class StreamingDataProducer:
             return False
 
     def produce_stream(self, messages_per_second: float = 0.1, duration: int = None):
-        """
-        STUDENT TODO: Implement the main streaming loop
-        
-        Parameters:
-        - messages_per_second: Rate of message production (default: 0.1 for 10-second intervals)
-        - duration: Total runtime in seconds (None for infinite)
-        """
-        
+
         print(f"Starting producer: {messages_per_second} msg/sec ({1/messages_per_second:.1f} second intervals), duration: {duration or 'infinite'}")
-        
+
         start_time = time.time()
         message_count = 0
-        
+
         try:
             while True:
-                # Check if we've reached the duration limit
+
                 if duration and (time.time() - start_time) >= duration:
                     print(f"Reached duration limit of {duration} seconds")
                     break
-                
-                # Generate and send data
-                data = self.generate_sample_data()
-                success = self.send_message(data)
-                
-                if success:
-                    message_count += 1
-                    if message_count % 10 == 0:  # Print progress every 10 messages
-                        print(f"Sent {message_count} messages...")
-                
-                # Calculate sleep time to maintain desired message rate
+
+                # MUST loop through list of messages
+                messages = self.generate_sample_data()
+                for msg in messages:
+                    success = self.send_message(msg)
+                    if success:
+                        message_count += 1
+
                 sleep_time = 1.0 / messages_per_second
                 time.sleep(sleep_time)
-                
+
         except KeyboardInterrupt:
             print("\nProducer interrupted by user")
         except Exception as e:
             print(f"Streaming error: {e}")
         finally:
-            # Implement proper cleanup
             self.close()
             print(f"Producer stopped. Total messages sent: {message_count}")
+
 
     def close(self):
         """Implement producer cleanup and resource release"""
